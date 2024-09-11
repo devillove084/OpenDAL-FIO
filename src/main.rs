@@ -31,15 +31,35 @@ async fn main() -> anyhow::Result<()> {
     let op = Arc::new(Operator::new(builder)?.finish());
 
     let (tx, rx): (Sender<Vec<u8>>, Receiver<Vec<u8>>) = unbounded();
-    let metrics = Arc::new(Mutex::new(MetricsCollector::new(1)));
-
     let data_generator = DataGenerate::new(cli.file_size(), cli.block_size(), false);
 
-    let runner = Runner::new(8, op, cli.path(), metrics.clone());
+    let gen = std::thread::spawn(move || {
+        data_generator.generate(tx);
+    });
 
-    tokio::spawn(async move { data_generator.generate(tx) });
+    let metrics = Arc::new(Mutex::new(MetricsCollector::new(1)));
 
-    runner.start(rx);
+    let runner = Runner::new(cli.num_jobs(), op, cli.path(), metrics.clone());
+    let runner_task = tokio::spawn(async move { runner.start(rx).await });
+
+    let metrics_clone = metrics.clone();
+    let metric_task = std::thread::spawn(move || loop {
+        {
+            let metrics = metrics_clone.lock().unwrap();
+            if metrics.is_done() {
+                break;
+            }
+            metrics.display_metrics();
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    });
+
+    gen.join().unwrap();
+    runner_task.await.unwrap();
+    metric_task.join().unwrap();
+
+    let metrics = metrics.lock().unwrap();
+    metrics.display_metrics();
 
     Ok(())
 }

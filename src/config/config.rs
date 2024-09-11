@@ -86,4 +86,8 @@ impl Configs {
     pub fn block_size(&self) -> u64 {
         self.block_size
     }
+
+    pub fn num_jobs(&self) -> usize {
+        self.num_jobs
+    }
 }
